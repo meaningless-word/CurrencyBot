@@ -1,26 +1,26 @@
 import telebot
-import json
 from fc_api import FreeCurrencyAPI as fc
 from telebot import types
+from inside_exceptions import ConversionException
 
 from config import T
 
 bot = telebot.TeleBot(T)
 
 currencies = {
-    "US Dollar": "USD",
-    "Russian Ruble": "RUB",
+    "USD": "US Dollar",
+    "RUB": "Russian Ruble",
 }
 
-from_cur = ''
-to_curr = ''
-quantity = 0
+base = ''
+quote = ''
+amount = 0
 
-keyboard = types.InlineKeyboardMarkup()
+hideBoard = types.ReplyKeyboardRemove()
 
 
-@bot.message_handler(commands=['start'])
-def start(message: telebot.types.Message):
+@bot.message_handler(commands=['start', 'help'])
+def start(message: types.Message):
     text = """
 Конвертер валют
 Команды бота:
@@ -32,62 +32,57 @@ def start(message: telebot.types.Message):
 
 
 @bot.message_handler(commands=['load'])
-def load(message: telebot.types.Message):
+def load(message: types.Message):
     global currencies
-    currencies = fc.fc_load_currenies()
-    key_prepare()
+    currencies = fc.fc_load_currencies()
     show(message)
 
 
 @bot.message_handler(commands=['show'])
-def show(message: telebot.types.Message):
+def show(message: types.Message):
     text = "доступные валюты:\n" + '\n'.join(['%s :: %s' % (key, value) for (key, value) in currencies.items()])
     bot.reply_to(message, text)
 
 
 @bot.message_handler(commands=['convert'])
-def convert(message: telebot.types.Message):
-    #bot.send_message(message.from_user.id, "из какой?")
-    bot.send_message(message.from_user.id,'из какой?', reply_markup=keyboard)
-    bot.register_next_step_handler(message, get_first_curr)
+def convert(message: types.Message):
+    keyboard = types.ReplyKeyboardMarkup()
+    keyboard.add(*currencies.keys(), row_width=8)
+    text = 'для удобства ввода воспользуйтесь контекстной клавиатурой\n'
+    text += 'будут запрошены три параметра: базовая валюта, котируемая и количество средств\n'
+    text += 'базовая: '
+    bot.send_message(message.from_user.id, text, reply_markup=keyboard)
+    bot.register_next_step_handler(message, get_first)
 
 
-def get_first_curr(message: telebot.types.Message):
-    global from_cur
-    from_cur = currencies[message.text]
-    text = message.text + '\nв какую?'
+def get_first(message: types.Message):
+    global base
+    base = message.text
+    text = message.text + '\nкотируемая: '
     bot.send_message(message.from_user.id, text)
-    #bot.send_message(message.from_user.id, text, reply_markup=keyboard)
-    bot.register_next_step_handler(message, get_quantity)
+    bot.register_next_step_handler(message, get_second)
 
 
-def get_quantity(message: telebot.types.Message):
-    pass
+def get_second(message: types.Message):
+    global quote
+    quote = message.text
+    text = message.text + '\nколичество: '
+    bot.send_message(message.from_user.id, text, reply_markup=hideBoard)
+    bot.register_next_step_handler(message, get_third)
 
 
-def key_prepare():
-    buttons = []
-    for k, v in currencies.items():
-        button = types.InlineKeyboardButton(text=v, callback_data=k)
-        buttons.append(button)
+def get_third(message: types.Message):
+    global amount
+    amount = message.text
 
-        if len(buttons) % 8 == 0:
-            keyboard.row(*buttons)
-            buttons = []
-    if len(buttons) > 0:
-        keyboard.row(*buttons)
-
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_worker(call):
-    if call.message:
-        if call.data in currencies.keys():  # call.data это callback_data, которую мы указали при объявлении кнопки
-            print("Ok")
-            bot.send_message(call.message.chat.id, 'Запомню : )')
-    # elif call.data == "no":
-    #     print("жаль")
-    #     bot.send_message(call.message.chat.id, 'Зря')
+    try:
+        total_base = fc.fc_exchange(currencies, base, quote, amount)
+    except ConversionException as e:
+        bot.reply_to(message, f'Ошибка пользователя:\n{e}')
+    except Exception as e:
+        bot.reply_to(message, f'Не удалось обработать команду\n{e}')
+    else:
+        bot.send_message(message.chat.id, total_base)
 
 
-key_prepare()
 bot.polling()
